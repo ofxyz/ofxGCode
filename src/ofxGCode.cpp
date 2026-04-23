@@ -36,7 +36,6 @@ void ofxGCode::clear(){
 
 void ofxGCode::draw(int max_lines_to_show){
     
-    int draw_count = 0;
     if (max_lines_to_show <= 0) max_lines_to_show = lines.size();
     
     int end_index = MIN(max_lines_to_show, lines.size());
@@ -86,12 +85,11 @@ void ofxGCode::draw(int max_lines_to_show){
     
 }
 
-//genertaes gcode and writes it to a file
+//generates gcode and writes it to a file
 void ofxGCode::save(string name){
     float inches_per_pixel = 1.0 / pixels_per_inch;
     
     vector<string> commands;
-    commands.clear();
     
     //pen up and positioned at the origin
     commands.push_back("M3 S0");
@@ -125,18 +123,17 @@ void ofxGCode::save(string name){
     commands.push_back("M3 S0");
     commands.push_back("G0 X0 Y0");
     
-    cout<<"transit distance: "<<measureTransitDistance()<<endl;
+    ofLogNotice("ofxGCode") << "transit distance: " << measureTransitDistance();
     
     //write it to file
-    
-    cout<<"saving "<<commands.size()<<" commands"<<endl;
+    ofLogNotice("ofxGCode") << "saving " << commands.size() << " commands";
     ofFile myTextFile;
     myTextFile.open(name,ofFile::WriteOnly);
     for (int i=0; i<commands.size(); i++){
         myTextFile<<commands[i]<<endl;
     }
     
-    cout<<"SAVED"<<endl;
+    ofLogNotice("ofxGCode") << "saved " << name;
 }
 
 
@@ -291,6 +288,33 @@ vector<ofVec2f> ofxGCode::get_arc_pnts(ofVec2f center, float size, int steps, fl
     return pnts;
 }
 
+vector<ofVec2f> ofxGCode::get_arc_points_ijk(ofVec2f start, ofVec2f end, ofVec2f center, bool clockwise, int steps){
+    vector<ofVec2f> pnts;
+    
+    ofVec2f v1 = start - center;
+    ofVec2f v2 = end - center;
+    float angle1 = atan2(v1.y, v1.x);
+    float angle2 = atan2(v2.y, v2.x);
+    float radius = v1.length();
+    
+    float sweep = angle2 - angle1;
+    if (clockwise) {
+        if (sweep > 0) sweep -= TWO_PI;
+    } else {
+        if (sweep < 0) sweep += TWO_PI;
+    }
+    
+    for (int i = 0; i <= steps; i++){
+        float t = (float)i / (float)steps;
+        float angle = angle1 + sweep * t;
+        ofVec2f pos;
+        pos.x = center.x + cos(angle) * radius;
+        pos.y = center.y + sin(angle) * radius;
+        pnts.push_back(pos);
+    }
+    return pnts;
+}
+
 //Emulating the begin/end shape functionality
 void ofxGCode::begin_shape(){
     shape_pnts.clear();
@@ -314,7 +338,7 @@ void ofxGCode::end_shape(bool close){
     }
 }
 
-//drawing polygone from points
+//drawing polygon from points
 void ofxGCode::polygon(vector<ofVec2f> pnts, bool close_shape){
     begin_shape();
     for (int i=0; i<pnts.size(); i++){
@@ -354,7 +378,7 @@ void ofxGCode::add_lines(vector<GLine> new_lines){
     }
 }
 
-//Thick lines are just multiple lines, eenly spaced
+//Thick lines are just multiple lines, evenly spaced
 void ofxGCode::thick_line(float x1, float y1, float x2, float y2, float spacing, int layers){
     thick_line(ofVec2f(x1,y1), ofVec2f(x2,y2), spacing, layers);
 }
@@ -792,7 +816,7 @@ void ofxGCode::trim_outside(ofRectangle bounds){
     lines = trim_lines_outside(lines, bounds);
 }
 
-//takes a list of lines and rmeoves any lines that intersect a satic line
+//takes a list of lines and removes any lines that intersect a static line
 vector<GLine> ofxGCode::trim_intersecting_lines(vector<GLine> lines_to_trim, vector<GLine> static_lines){
     vector<GLine> val;
     for (int i=0; i<lines_to_trim.size(); i++){
@@ -943,7 +967,7 @@ vector<vector<ofVec2f>> ofxGCode::load_outlines(string file_path){
     ofFile file(file_path);
     
     if(!file.exists()){
-        cout<<"The outline file " << file_path << " is missing"<<endl;
+        ofLogError("ofxGCode") << "The outline file " << file_path << " is missing";
         return outlines;
     }
     ofBuffer buffer(file);
@@ -976,7 +1000,7 @@ vector<vector<ofVec2f>> ofxGCode::load_outlines(string file_path){
     }
     
     //add the last shape if there's anything there
-    cout<<cur_outline.size()<<endl;
+    ofLogVerbose("ofxGCode") << "outline size: " << cur_outline.size();
     if (cur_outline.size() > 1){
         outlines.push_back(cur_outline);
     }
@@ -991,7 +1015,7 @@ vector<GLine> ofxGCode::load_lines(string file_path){
     ofFile file(file_path);
     
     if(!file.exists()){
-        cout<<"The file " << file_path << " is missing"<<endl;
+        ofLogError("ofxGCode") << "The file " << file_path << " is missing";
         return new_lines;
     }
     ofBuffer buffer(file);
@@ -1044,7 +1068,67 @@ bool ofxGCode::checkInPolygon(vector<ofVec2f> p, ofVec2f pnt){
     return checkInPolygon(p, pnt.x, pnt.y);
 }
 
+//--------------------------------------------------------------
+// 3-axis G-code output
+//--------------------------------------------------------------
 
+string ofxGCode::toGCodeString(float safeZ){
+    vector<string> commands;
+    
+    // Preamble
+    commands.push_back("G21 ; mm mode");
+    commands.push_back("G90 ; absolute positioning");
+    commands.push_back("G0 Z" + ofToString(safeZ, 3));
+    commands.push_back("G0 X0 Y0");
+    
+    ofVec2f lastPos2D(0, 0);
+    bool penIsUp = true;
+    
+    for (size_t i = 0; i < lines.size(); i++){
+        GLine line = lines[i];
+        float z = (i < z_values.size()) ? z_values[i] : 0.0f;
+        
+        // If we're not at the start of this line, travel there
+        if (line.a != lastPos2D || penIsUp) {
+            if (!penIsUp) {
+                // Retract
+                commands.push_back("G0 Z" + ofToString(safeZ, 3));
+                penIsUp = true;
+            }
+            // Rapid to start XY
+            commands.push_back("G0 X" + ofToString(line.a.x, 3) + " Y" + ofToString(line.a.y, 3));
+            // Plunge to Z
+            commands.push_back("G1 Z" + ofToString(z, 3) + " F300");
+            penIsUp = false;
+        }
+        
+        // Feed move to end point
+        commands.push_back("G1 X" + ofToString(line.b.x, 3) + " Y" + ofToString(line.b.y, 3) + " Z" + ofToString(z, 3));
+        
+        lastPos2D = line.b;
+    }
+    
+    // Closing
+    commands.push_back("G0 Z" + ofToString(safeZ, 3));
+    commands.push_back("G0 X0 Y0");
+    commands.push_back("M2 ; end program");
+    
+    string result;
+    for (const auto& cmd : commands) {
+        result += cmd + "\n";
+    }
+    return result;
+}
+
+void ofxGCode::save3D(string name, float safeZ){
+    string gcodeStr = toGCodeString(safeZ);
+    
+    ofFile myTextFile;
+    myTextFile.open(name, ofFile::WriteOnly);
+    myTextFile << gcodeStr;
+    
+    ofLogNotice("ofxGCode") << "3D G-code saved to " << name;
+}
 
 
 

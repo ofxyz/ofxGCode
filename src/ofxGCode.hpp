@@ -78,8 +78,19 @@ public:
     
     //--- Saving
     
-    ///saves the file to the bin/data folder
+    ///saves the file to the bin/data folder (2D pen plotter format with M3 pen control)
     void save(string name);
+    
+    ///saves 3-axis G-code to a file. Uses G0/G1 with X Y Z F (no pen servo commands).
+    ///safeZ is the height for rapid travel moves between cuts.
+    void save3D(string name, float safeZ = 5.0f);
+    
+    ///returns the G-code as a string (3-axis format) instead of writing to file
+    string toGCodeString(float safeZ = 5.0f);
+    
+    // Z height for each GLine (optional, for 3D toolpaths)
+    // When non-empty, lines[i] uses z_values[i] for its Z coordinate
+    vector<float> z_values;
     
     
     //--- Rectangles
@@ -113,6 +124,10 @@ public:
     static vector<ofVec2f> get_oval_pnts(ofVec2f center, float width, float height, int steps, float angle_offset=0);
     
     static vector<ofVec2f> get_arc_pnts(ofVec2f center, float size, int steps, float start_angle, float end_angle, float height_scale = 1);
+    
+    ///static function to get points along an arc defined by start, end, center (I,J,K style)
+    ///clockwise determines the arc direction. steps is the resolution.
+    static vector<ofVec2f> get_arc_points_ijk(ofVec2f start, ofVec2f end, ofVec2f center, bool clockwise, int steps = 32);
     
     
     //--- Polygons
