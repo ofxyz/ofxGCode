@@ -15,8 +15,10 @@ static float computeArcSweep(const glm::vec2& v1, const glm::vec2& v2, MoveType 
     float sweep = angle2 - angle1;
     if (type == MoveType::ArcCW) {
         if (sweep > 0) sweep -= TWO_PI;
+        if (std::abs(sweep) < 1e-6f) sweep = -TWO_PI;
     } else {
         if (sweep < 0) sweep += TWO_PI;
+        if (std::abs(sweep) < 1e-6f) sweep = TWO_PI;
     }
     return sweep;
 }
